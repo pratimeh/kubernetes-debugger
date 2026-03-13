@@ -1,0 +1,1642 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>K8s Pod Debugger</title>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700&family=Syne:wght@400;700;800&display=swap" rel="stylesheet"/>
+<style>
+  :root {
+    --bg:        #0a0c0f;
+    --surface:   #0f1318;
+    --panel:     #131920;
+    --border:    #1e2a35;
+    --accent:    #00e5ff;
+    --accent2:   #ff4757;
+    --accent3:   #2ed573;
+    --warn:      #ffa502;
+    --text:      #c8d6e5;
+    --muted:     #4a6178;
+    --font-mono: 'JetBrains Mono', monospace;
+    --font-ui:   'Syne', sans-serif;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font-mono);
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  /* Grid background */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background-image:
+      linear-gradient(rgba(0,229,255,0.03) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(0,229,255,0.03) 1px, transparent 1px);
+    background-size: 40px 40px;
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  /* ── HEADER ── */
+  header {
+    position: relative;
+    z-index: 10;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 18px 32px;
+    border-bottom: 1px solid var(--border);
+    background: rgba(10,12,15,0.95);
+    backdrop-filter: blur(12px);
+  }
+
+  .logo {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .logo-icon {
+    width: 36px; height: 36px;
+    background: var(--accent);
+    clip-path: polygon(50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 16px;
+    animation: pulse-hex 3s ease-in-out infinite;
+  }
+
+  @keyframes pulse-hex {
+    0%,100% { box-shadow: 0 0 0 0 rgba(0,229,255,0.4); }
+    50%      { box-shadow: 0 0 0 8px rgba(0,229,255,0); }
+  }
+
+  .logo-text {
+    font-family: var(--font-ui);
+    font-size: 20px;
+    font-weight: 800;
+    letter-spacing: -0.5px;
+    color: #fff;
+  }
+
+  .logo-text span { color: var(--accent); }
+
+  .header-meta {
+    display: flex;
+    align-items: center;
+    gap: 20px;
+    font-size: 11px;
+    color: var(--muted);
+  }
+
+  .live-dot {
+    width: 7px; height: 7px;
+    border-radius: 50%;
+    background: var(--accent3);
+    animation: blink 1.5s ease-in-out infinite;
+    display: inline-block;
+    margin-right: 5px;
+  }
+
+  @keyframes blink {
+    0%,100% { opacity: 1; } 50% { opacity: 0.2; }
+  }
+
+  /* ── LAYOUT ── */
+  .app {
+    position: relative;
+    z-index: 1;
+    display: grid;
+    grid-template-columns: 300px 1fr;
+    grid-template-rows: auto 1fr;
+    height: calc(100vh - 61px);
+  }
+
+  /* ── SIDEBAR ── */
+  .sidebar {
+    grid-row: 1 / 3;
+    border-right: 1px solid var(--border);
+    background: var(--surface);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  .sidebar-section {
+    padding: 20px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .section-label {
+    font-size: 9px;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-bottom: 12px;
+  }
+
+  /* Namespace input */
+  .input-group {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-bottom: 12px;
+  }
+
+  .input-label {
+    font-size: 10px;
+    color: var(--muted);
+    letter-spacing: 1px;
+    text-transform: uppercase;
+  }
+
+  .styled-input {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    color: var(--text);
+    font-family: var(--font-mono);
+    font-size: 13px;
+    padding: 9px 12px;
+    border-radius: 4px;
+    outline: none;
+    transition: border-color 0.2s;
+    width: 100%;
+  }
+
+  .styled-input:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 2px rgba(0,229,255,0.1);
+  }
+
+  /* Scan button */
+  .btn-scan {
+    width: 100%;
+    padding: 11px;
+    background: var(--accent);
+    color: #000;
+    border: none;
+    border-radius: 4px;
+    font-family: var(--font-ui);
+    font-weight: 700;
+    font-size: 13px;
+    letter-spacing: 1px;
+    cursor: pointer;
+    transition: all 0.2s;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .btn-scan:hover { background: #33eaff; transform: translateY(-1px); }
+  .btn-scan:active { transform: translateY(0); }
+  .btn-scan:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+
+  .btn-scan .spinner {
+    display: none;
+    width: 14px; height: 14px;
+    border: 2px solid rgba(0,0,0,0.3);
+    border-top-color: #000;
+    border-radius: 50%;
+    animation: spin 0.7s linear infinite;
+    margin: 0 auto;
+  }
+
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .btn-scan.loading .btn-text { display: none; }
+  .btn-scan.loading .spinner { display: block; }
+
+  /* Filter chips */
+  .filter-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+
+  .chip {
+    font-size: 10px;
+    padding: 4px 8px;
+    border-radius: 3px;
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--muted);
+    cursor: pointer;
+    font-family: var(--font-mono);
+    transition: all 0.15s;
+  }
+
+  .chip:hover { border-color: var(--accent); color: var(--accent); }
+  .chip.active { background: rgba(0,229,255,0.1); border-color: var(--accent); color: var(--accent); }
+  .chip.crash  { border-color: var(--accent2); }
+  .chip.crash.active { background: rgba(255,71,87,0.1); border-color: var(--accent2); color: var(--accent2); }
+  .chip.warn   { border-color: var(--warn); }
+  .chip.warn.active { background: rgba(255,165,2,0.1); border-color: var(--warn); color: var(--warn); }
+
+  /* Pod list */
+  .pod-list {
+    flex: 1;
+    overflow-y: auto;
+    padding: 12px;
+  }
+
+  .pod-list::-webkit-scrollbar { width: 4px; }
+  .pod-list::-webkit-scrollbar-track { background: transparent; }
+  .pod-list::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+  .pod-item {
+    padding: 12px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    margin-bottom: 8px;
+    cursor: pointer;
+    transition: all 0.2s;
+    background: var(--panel);
+    position: relative;
+    overflow: hidden;
+  }
+
+  .pod-item::before {
+    content: '';
+    position: absolute;
+    left: 0; top: 0; bottom: 0;
+    width: 3px;
+    background: var(--muted);
+    transition: background 0.2s;
+  }
+
+  .pod-item.crash::before  { background: var(--accent2); }
+  .pod-item.pull::before   { background: var(--warn); }
+  .pod-item.oom::before    { background: #ff6b81; }
+  .pod-item.pending::before { background: var(--muted); }
+
+  .pod-item:hover, .pod-item.selected {
+    border-color: var(--accent);
+    background: rgba(0,229,255,0.04);
+  }
+
+  .pod-name {
+    font-size: 12px;
+    color: #fff;
+    font-weight: 500;
+    margin-bottom: 5px;
+    word-break: break-all;
+  }
+
+  .pod-state {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 10px;
+    padding: 2px 7px;
+    border-radius: 3px;
+    font-weight: 500;
+  }
+
+  .state-crash  { background: rgba(255,71,87,0.15);  color: var(--accent2); }
+  .state-pull   { background: rgba(255,165,2,0.15);  color: var(--warn); }
+  .state-oom    { background: rgba(255,107,129,0.15); color: #ff6b81; }
+  .state-other  { background: rgba(74,97,120,0.3);   color: var(--muted); }
+  .state-ok     { background: rgba(46,213,115,0.15); color: var(--accent3); }
+
+  .pod-restarts {
+    font-size: 10px;
+    color: var(--muted);
+    margin-top: 4px;
+  }
+
+  .empty-state {
+    text-align: center;
+    padding: 40px 20px;
+    color: var(--muted);
+    font-size: 12px;
+    line-height: 1.8;
+  }
+
+  .empty-icon { font-size: 32px; margin-bottom: 12px; opacity: 0.5; }
+
+  /* ── MAIN PANEL ── */
+  .main-panel {
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  /* Toolbar */
+  .toolbar {
+    display: flex;
+    align-items: center;
+    gap: 0;
+    padding: 0 24px;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface);
+    overflow-x: auto;
+  }
+
+  .tab {
+    padding: 14px 18px;
+    font-size: 11px;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    color: var(--muted);
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    transition: all 0.2s;
+    white-space: nowrap;
+    background: none;
+    border-top: none;
+    border-left: none;
+    border-right: none;
+    font-family: var(--font-mono);
+  }
+
+  .tab:hover { color: var(--text); }
+  .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+  /* Content area */
+  .content {
+    flex: 1;
+    overflow-y: auto;
+    padding: 24px;
+  }
+
+  .content::-webkit-scrollbar { width: 4px; }
+  .content::-webkit-scrollbar-track { background: transparent; }
+  .content::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+  /* Welcome screen */
+  .welcome {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    text-align: center;
+    gap: 16px;
+  }
+
+  .welcome-hex {
+    width: 80px; height: 80px;
+    background: rgba(0,229,255,0.08);
+    clip-path: polygon(50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 32px;
+    border: 1px solid rgba(0,229,255,0.2);
+    margin-bottom: 8px;
+  }
+
+  .welcome h2 {
+    font-family: var(--font-ui);
+    font-size: 22px;
+    font-weight: 800;
+    color: #fff;
+  }
+
+  .welcome p {
+    font-size: 12px;
+    color: var(--muted);
+    max-width: 340px;
+    line-height: 1.7;
+  }
+
+  .welcome-steps {
+    display: flex;
+    gap: 12px;
+    margin-top: 12px;
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+
+  .step-card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 14px 18px;
+    font-size: 11px;
+    color: var(--muted);
+    text-align: left;
+    width: 160px;
+  }
+
+  .step-num {
+    font-family: var(--font-ui);
+    font-size: 22px;
+    font-weight: 800;
+    color: rgba(0,229,255,0.3);
+    margin-bottom: 6px;
+  }
+
+  /* RCA section */
+  .rca-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    margin-bottom: 24px;
+    gap: 16px;
+    flex-wrap: wrap;
+  }
+
+  .rca-title {
+    font-family: var(--font-ui);
+    font-size: 18px;
+    font-weight: 800;
+    color: #fff;
+  }
+
+  .rca-title span { color: var(--accent); }
+
+  .state-badge {
+    padding: 5px 12px;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 1px;
+  }
+
+  /* Cards */
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    margin-bottom: 16px;
+    overflow: hidden;
+  }
+
+  .card-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border);
+    background: rgba(255,255,255,0.02);
+  }
+
+  .card-title {
+    font-size: 10px;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    color: var(--accent);
+    font-weight: 700;
+  }
+
+  .card-body {
+    padding: 16px;
+  }
+
+  /* Terminal / log output */
+  .terminal {
+    background: #060809;
+    border-radius: 4px;
+    padding: 14px;
+    font-size: 11.5px;
+    line-height: 1.7;
+    color: #8fa3b3;
+    max-height: 300px;
+    overflow-y: auto;
+    white-space: pre-wrap;
+    word-break: break-all;
+  }
+
+  .terminal::-webkit-scrollbar { width: 3px; }
+  .terminal::-webkit-scrollbar-thumb { background: var(--border); }
+
+  .terminal .err  { color: var(--accent2); }
+  .terminal .warn { color: var(--warn); }
+  .terminal .ok   { color: var(--accent3); }
+  .terminal .info { color: var(--accent); }
+
+  /* RCA box */
+  .rca-box {
+    border: 1px solid rgba(255,71,87,0.3);
+    background: rgba(255,71,87,0.05);
+    border-radius: 6px;
+    padding: 16px;
+    margin-bottom: 16px;
+  }
+
+  .rca-box.fix {
+    border-color: rgba(46,213,115,0.3);
+    background: rgba(46,213,115,0.05);
+  }
+
+  .rca-box h4 {
+    font-size: 10px;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    margin-bottom: 10px;
+    color: var(--accent2);
+  }
+
+  .rca-box.fix h4 { color: var(--accent3); }
+
+  .rca-box p, .rca-box li {
+    font-size: 12px;
+    line-height: 1.7;
+    color: var(--text);
+  }
+
+  .rca-box ul { padding-left: 16px; }
+  .rca-box li { margin-bottom: 4px; }
+
+  /* Command copy block */
+  .cmd-block {
+    background: #060809;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 10px 14px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 8px;
+  }
+
+  .cmd-block code {
+    font-size: 11px;
+    color: var(--accent3);
+    flex: 1;
+  }
+
+  .copy-btn {
+    font-size: 9px;
+    padding: 3px 8px;
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    background: transparent;
+    color: var(--muted);
+    cursor: pointer;
+    font-family: var(--font-mono);
+    transition: all 0.15s;
+    white-space: nowrap;
+  }
+
+  .copy-btn:hover { border-color: var(--accent3); color: var(--accent3); }
+
+  /* Stats row */
+  .stats-row {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+    gap: 12px;
+    margin-bottom: 20px;
+  }
+
+  .stat-card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 14px;
+    text-align: center;
+  }
+
+  .stat-val {
+    font-family: var(--font-ui);
+    font-size: 28px;
+    font-weight: 800;
+    color: #fff;
+    line-height: 1;
+    margin-bottom: 4px;
+  }
+
+  .stat-val.red  { color: var(--accent2); }
+  .stat-val.yel  { color: var(--warn); }
+  .stat-val.grn  { color: var(--accent3); }
+
+  .stat-label {
+    font-size: 9px;
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+
+  /* Langflow config panel */
+  .config-panel {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 20px;
+    margin-bottom: 20px;
+  }
+
+  .config-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+    margin-bottom: 12px;
+  }
+
+  .btn-sm {
+    padding: 8px 16px;
+    border-radius: 4px;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    cursor: pointer;
+    border: 1px solid var(--accent);
+    background: transparent;
+    color: var(--accent);
+    transition: all 0.15s;
+    letter-spacing: 0.5px;
+  }
+
+  .btn-sm:hover { background: rgba(0,229,255,0.1); }
+  .btn-sm.danger { border-color: var(--accent2); color: var(--accent2); }
+  .btn-sm.danger:hover { background: rgba(255,71,87,0.1); }
+
+  /* Toast */
+  .toast {
+    position: fixed;
+    bottom: 24px; right: 24px;
+    background: var(--panel);
+    border: 1px solid var(--accent3);
+    color: var(--accent3);
+    padding: 10px 18px;
+    border-radius: 4px;
+    font-size: 12px;
+    z-index: 1000;
+    transform: translateY(60px);
+    opacity: 0;
+    transition: all 0.3s;
+  }
+
+  .toast.show { transform: translateY(0); opacity: 1; }
+
+  /* Loading overlay */
+  .scanning-overlay {
+    display: none;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    gap: 20px;
+  }
+
+  .scanning-overlay.visible { display: flex; }
+
+  .scan-ring {
+    width: 60px; height: 60px;
+    border: 2px solid var(--border);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+  }
+
+  .scan-text {
+    font-size: 12px;
+    color: var(--muted);
+    letter-spacing: 2px;
+  }
+
+  .scan-log {
+    font-size: 11px;
+    color: rgba(0,229,255,0.5);
+    text-align: center;
+    max-width: 300px;
+    line-height: 1.8;
+  }
+
+  /* Error alert */
+  .alert {
+    background: rgba(255,71,87,0.08);
+    border: 1px solid rgba(255,71,87,0.3);
+    border-radius: 6px;
+    padding: 14px 16px;
+    font-size: 12px;
+    color: var(--accent2);
+    margin-bottom: 16px;
+  }
+
+  /* Responsive */
+  @media (max-width: 768px) {
+    .app { grid-template-columns: 1fr; }
+    .sidebar { grid-row: auto; border-right: none; border-bottom: 1px solid var(--border); max-height: 280px; }
+    .config-row { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">
+    <div class="logo-icon">⎈</div>
+    <div class="logo-text">K8s <span>Debug</span></div>
+  </div>
+  <div class="header-meta">
+    <span><span class="live-dot"></span>CONNECTED TO LANGFLOW</span>
+    <span id="clock">--:--:--</span>
+  </div>
+</header>
+
+<div class="app">
+
+  <!-- SIDEBAR -->
+  <aside class="sidebar">
+
+    <!-- Langflow Config -->
+    <div class="sidebar-section">
+      <div class="section-label">Langflow Config</div>
+      <div class="input-group">
+        <div class="input-label">API URL</div>
+        <input class="styled-input" id="lfUrl" type="text"
+               value="http://localhost:7860/api/v1/run/"
+               placeholder="http://localhost:7860/api/v1/run/"/>
+      </div>
+      <div class="input-group">
+        <div class="input-label">Flow ID</div>
+        <input class="styled-input" id="lfFlowId" type="text"
+               placeholder="your-flow-id"/>
+      </div>
+      <div class="input-group">
+        <div class="input-label">API Key</div>
+        <input class="styled-input" id="lfApiKey" type="password"
+               placeholder="sk-..."/>
+      </div>
+    </div>
+
+    <!-- Scan Controls -->
+    <div class="sidebar-section">
+      <div class="section-label">Scan Target</div>
+      <div class="input-group">
+        <div class="input-label">Namespace</div>
+        <input class="styled-input" id="namespace" type="text" value="default"/>
+      </div>
+      <button class="btn-scan" id="scanBtn" onclick="scanPods()">
+        <span class="btn-text">⟳ &nbsp;SCAN PODS</span>
+        <div class="spinner"></div>
+      </button>
+    </div>
+
+    <!-- Filters -->
+    <div class="sidebar-section">
+      <div class="section-label">Filter by State</div>
+      <div class="filter-chips">
+        <div class="chip active" onclick="toggleFilter(this, 'all')">All</div>
+        <div class="chip crash" onclick="toggleFilter(this, 'CrashLoopBackOff')">CrashLoop</div>
+        <div class="chip warn"  onclick="toggleFilter(this, 'ImagePullBackOff')">ImagePull</div>
+        <div class="chip"       onclick="toggleFilter(this, 'OOMKilled')">OOMKilled</div>
+        <div class="chip"       onclick="toggleFilter(this, 'Pending')">Pending</div>
+        <div class="chip"       onclick="toggleFilter(this, 'Evicted')">Evicted</div>
+      </div>
+    </div>
+
+    <!-- Pod List -->
+    <div class="pod-list" id="podList">
+      <div class="empty-state">
+        <div class="empty-icon">⎈</div>
+        Configure Langflow above and<br/>click <strong>SCAN PODS</strong> to begin
+      </div>
+    </div>
+
+  </aside>
+
+  <!-- MAIN PANEL -->
+  <div class="main-panel">
+
+    <div class="toolbar">
+      <button class="tab active" onclick="switchTab(this,'overview')">Overview</button>
+      <button class="tab" onclick="switchTab(this,'logs')">Logs</button>
+      <button class="tab" onclick="switchTab(this,'describe')">Describe</button>
+      <button class="tab" onclick="switchTab(this,'events')">Events</button>
+      <button class="tab" onclick="switchTab(this,'rca')">RCA &amp; Fix</button>
+    </div>
+
+    <div class="content" id="mainContent">
+
+      <!-- Welcome -->
+      <div class="welcome" id="welcomeView">
+        <div class="welcome-hex">⎈</div>
+        <h2>Kubernetes Pod Debugger</h2>
+        <p>Connect to your Langflow instance, enter your namespace, and scan for pods in error states.</p>
+        <div class="welcome-steps">
+          <div class="step-card"><div class="step-num">01</div>Set your Langflow URL &amp; Flow ID</div>
+          <div class="step-card"><div class="step-num">02</div>Enter namespace &amp; click Scan</div>
+          <div class="step-card"><div class="step-num">03</div>Select an errored pod</div>
+          <div class="step-card"><div class="step-num">04</div>Get RCA &amp; fix instantly</div>
+        </div>
+      </div>
+
+      <!-- Scanning -->
+      <div class="scanning-overlay" id="scanningView">
+        <div class="scan-ring"></div>
+        <div class="scan-text">SCANNING CLUSTER</div>
+        <div class="scan-log" id="scanLog">Connecting to Langflow API...</div>
+      </div>
+
+      <!-- Pod Detail -->
+      <div id="podDetailView" style="display:none;">
+
+        <!-- Stats row -->
+        <div class="stats-row" id="statsRow"></div>
+
+        <!-- Tab panels -->
+        <div id="tab-overview"></div>
+        <div id="tab-logs"     style="display:none;"></div>
+        <div id="tab-describe" style="display:none;"></div>
+        <div id="tab-events"   style="display:none;"></div>
+        <div id="tab-rca"      style="display:none;"></div>
+
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<!-- Toast -->
+<div class="toast" id="toast"></div>
+
+<script>
+// ── STATE ──────────────────────────────────────────────────────────
+let allPods       = [];
+let selectedPod   = null;
+let activeFilter  = 'all';
+let activeTab     = 'overview';
+let podDataCache  = {};
+
+const ERROR_STATES = [
+  'CrashLoopBackOff','ImagePullBackOff','ErrImagePull',
+  'OOMKilled','Error','CreateContainerConfigError',
+  'InvalidImageName','CreateContainerError','ContainerCannotRun',
+  'Evicted','Pending'
+];
+
+// ── CLOCK ──────────────────────────────────────────────────────────
+setInterval(() => {
+  document.getElementById('clock').textContent =
+    new Date().toLocaleTimeString('en-GB');
+}, 1000);
+
+// ── LANGFLOW API ───────────────────────────────────────────────────
+async function callLangflow(message) {
+  const url    = document.getElementById('lfUrl').value.trim().replace(/\/$/, '');
+  const flowId = document.getElementById('lfFlowId').value.trim();
+  const apiKey = document.getElementById('lfApiKey').value.trim();
+
+  if (!flowId) throw new Error('Flow ID is required');
+
+  const headers = { 'Content-Type': 'application/json' };
+  if (apiKey) headers['x-api-key'] = apiKey;
+
+  const res = await fetch(`${url}/${flowId}`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({
+      input_value: message,
+      output_type: 'chat',
+      input_type:  'chat',
+    })
+  });
+
+  if (!res.ok) {
+    const errBody = await res.text().catch(() => '');
+    throw new Error(`Langflow error ${res.status}: ${res.statusText}. ${errBody}`);
+  }
+
+  const data = await res.json();
+  console.log('[Langflow raw response]', JSON.stringify(data, null, 2));
+
+  const text       = extractText(data);
+  const toolOutput = extractToolOutput(data);
+  return { text, toolOutput, raw: data };
+}
+
+// Strip markdown code fences from Langflow responses
+function stripFences(text) {
+  if (!text) return text;
+  return text.replace(/^```[a-z]*\n?/i, '').replace(/\n?```$/,'').trim();
+}
+
+// Extract the tool_use output block from content_blocks (has full kubectl data)
+function extractToolOutput(data) {
+  try {
+    const blocks = data?.outputs?.[0]?.outputs?.[0]?.results?.message?.data?.content_blocks;
+    if (!blocks) return null;
+    for (const block of blocks) {
+      for (const content of (block.contents || [])) {
+        if (content.type === 'tool_use' && content.output) {
+          return content.output;  // Full logs/describe/events already in here
+        }
+      }
+    }
+  } catch(e) {}
+  return null;
+}
+
+// Robust extractor — confirmed path from actual Langflow response
+function extractText(data) {
+  // Detect empty outputs[] — means no Chat Output node wired in Langflow
+  const innerOutputs = data?.outputs?.[0]?.outputs;
+  if (Array.isArray(innerOutputs) && innerOutputs.length === 0) {
+    throw new Error('EMPTY_OUTPUT');
+  }
+
+  // PRIMARY: confirmed working path from actual response
+  const t1 = data?.outputs?.[0]?.outputs?.[0]?.results?.message?.text;
+  if (t1) return stripFences(t1);
+
+  // messages[0].message
+  const t2 = data?.outputs?.[0]?.outputs?.[0]?.messages?.[0]?.message;
+  if (t2) return stripFences(t2);
+
+  // outputs.message.message
+  const t3 = data?.outputs?.[0]?.outputs?.[0]?.outputs?.message?.message;
+  if (t3) return stripFences(t3);
+
+  // artifacts.message
+  const t4 = data?.outputs?.[0]?.outputs?.[0]?.artifacts?.message;
+  if (t4) return stripFences(t4);
+
+  // data.result (older Langflow)
+  const t5 = data?.result;
+  if (t5) return stripFences(t5);
+
+  throw new Error('Could not parse Langflow response. Check console (F12) for raw output.');
+}
+
+// ── SCAN PODS ──────────────────────────────────────────────────────
+async function scanPods() {
+  const ns  = document.getElementById('namespace').value.trim() || 'default';
+  const btn = document.getElementById('scanBtn');
+
+  btn.classList.add('loading');
+  btn.disabled = true;
+
+  showView('scanning');
+  setScanLog('Connecting to Langflow API...');
+
+  try {
+    setScanLog('Querying pod states in namespace: ' + ns + '...');
+
+    const prompt = `Check all pods in the "${ns}" namespace for any error states including CrashLoopBackOff, ImagePullBackOff, OOMKilled, ErrImagePull, Evicted, Pending, or any other failed state.
+
+1. Use the analyze_pods tool with namespace="${ns}" to scan and list all errored pods
+2. For each errored pod the tool returns, identify the root cause from its logs, describe output, and events
+3. For each pod provide:
+   - RCA: The exact reason it is failing
+   - Fix: Specific kubectl commands or config changes to resolve it
+
+After analysis, return a JSON array of ALL pods (including healthy ones) in this exact format:
+[{"name":"...","state":"...","restarts":0}]
+Use state "Running" for healthy pods.
+Return the JSON array at the end of your response.`;
+
+    const result = await callLangflow(prompt);
+    const rawText = result.text;
+    const toolOut = result.toolOutput;  // Full kubectl data from tool_use block
+
+    // Parse pod list — find the LAST valid JSON array in the response
+    // (LLM outputs prose first, JSON array last)
+    let pods = [];
+    try {
+      const matches = [...rawText.matchAll(/\[[\s\S]*?\]/g)];
+      // Pick the last match that parses as an array of pod objects
+      for (let i = matches.length - 1; i >= 0; i--) {
+        try {
+          const parsed = JSON.parse(matches[i][0]);
+          if (Array.isArray(parsed) && parsed.length > 0 && parsed[0].name) {
+            pods = parsed;
+            break;
+          }
+        } catch(e2) { continue; }
+      }
+      if (!pods.length) pods = parsePodsFallback(rawText, ns);
+    } catch(e) {
+      pods = parsePodsFallback(rawText, ns);
+    }
+    // Deduplicate by pod name
+    pods = pods.filter((p, i, arr) => arr.findIndex(x => x.name === p.name) === i);
+
+    allPods = pods;
+    podDataCache = {};
+
+    // Pre-populate cache from tool output already in the scan response
+    if (toolOut && pods.length > 0) {
+      for (const pod of pods) {
+        if (toolOut.includes(pod.name)) {
+          podDataCache[pod.name] = parseToolOutput(toolOut, pod, rawText);
+        }
+      }
+    }
+
+    renderPodList(pods);
+    showView('welcome');
+    showToast(`Found ${pods.length} pod(s) in ${ns}`);
+
+  } catch(err) {
+    showView('welcome');
+    if (err.message === 'EMPTY_OUTPUT') {
+      showAlert(
+        'Langflow returned empty output. Your flow is missing a Chat Output component or it is not connected to the Agent.\n\n' +
+        'Fix in Langflow:\n' +
+        '1. Open your flow\n' +
+        '2. Add a "Chat Output" component\n' +
+        '3. Connect: Agent → Chat Output\n' +
+        '4. Click Save and try again'
+      );
+    } else {
+      showAlert(err.message);
+    }
+  } finally {
+    btn.classList.remove('loading');
+    btn.disabled = false;
+  }
+}
+
+function parsePodsFallback(text, ns) {
+  const pods = [];
+  const lines = text.split('\n');
+  for (const line of lines) {
+    for (const state of ERROR_STATES) {
+      if (line.toLowerCase().includes(state.toLowerCase())) {
+        const nameMatch = line.match(/([a-z0-9][-a-z0-9]*)/i);
+        if (nameMatch) {
+          pods.push({ name: nameMatch[1], state, restarts: '?' });
+        }
+        break;
+      }
+    }
+  }
+  return pods;
+}
+
+// ── POD LIST RENDER ────────────────────────────────────────────────
+function renderPodList(pods) {
+  const list = document.getElementById('podList');
+
+  const filtered = activeFilter === 'all'
+    ? pods
+    : pods.filter(p => p.state === activeFilter);
+
+  if (!filtered.length) {
+    list.innerHTML = `<div class="empty-state">
+      <div class="empty-icon">✓</div>
+      No pods match the current filter
+    </div>`;
+    return;
+  }
+
+  list.innerHTML = filtered.map(pod => {
+    const cls   = stateClass(pod.state);
+    const badge = stateBadge(pod.state);
+    return `
+    <div class="pod-item ${cls} ${selectedPod?.name === pod.name ? 'selected' : ''}"
+         onclick="selectPod(${JSON.stringify(pod).replace(/"/g,'&quot;')})">
+      <div class="pod-name">${pod.name}</div>
+      <div class="pod-state ${stateColor(pod.state)}">${badge} ${pod.state}</div>
+      <div class="pod-restarts">↺ ${pod.restarts !== undefined && pod.restarts !== null && pod.restarts !== "?" ? pod.restarts + " restart(s)" : "restarts unknown"}</div>
+    </div>`;
+  }).join('');
+}
+
+function stateClass(s) {
+  if (!s) return '';
+  if (s.includes('Crash'))      return 'crash';
+  if (s.includes('Image') || s.includes('Pull')) return 'pull';
+  if (s.includes('OOM'))        return 'oom';
+  if (s === 'Pending')          return 'pending';
+  return '';
+}
+
+function stateColor(s) {
+  if (!s) return 'state-other';
+  if (s.includes('Crash'))      return 'state-crash';
+  if (s.includes('Image') || s.includes('Pull')) return 'state-pull';
+  if (s.includes('OOM'))        return 'state-oom';
+  if (s === 'Running')          return 'state-ok';
+  return 'state-other';
+}
+
+function stateBadge(s) {
+  if (!s) return '○';
+  if (s === 'Running')          return '●';
+  if (s.includes('Crash'))      return '✕';
+  if (s.includes('Image'))      return '⊗';
+  if (s.includes('OOM'))        return '⚠';
+  if (s === 'Pending')          return '◌';
+  return '○';
+}
+
+// ── SELECT POD ─────────────────────────────────────────────────────
+async function selectPod(pod) {
+  selectedPod = pod;
+  renderPodList(allPods);
+  showView('podDetail');
+
+  const isError = ERROR_STATES.includes(pod.state);
+
+  // Stats
+  document.getElementById('statsRow').innerHTML = `
+    <div class="stat-card">
+      <div class="stat-val ${isError ? 'red' : 'grn'}">${pod.state}</div>
+      <div class="stat-label">Current State</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-val yel">${pod.restarts ?? '—'}</div>
+      <div class="stat-label">Restarts</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-val">${document.getElementById('namespace').value || 'default'}</div>
+      <div class="stat-label">Namespace</div>
+    </div>`;
+
+  // Load data if not cached
+  if (!podDataCache[pod.name]) {
+    setTabContent('overview', loadingCard('Fetching pod data from Langflow...'));
+    setTabContent('logs',     loadingCard('Fetching logs...'));
+    setTabContent('describe', loadingCard('Fetching describe output...'));
+    setTabContent('events',   loadingCard('Fetching events...'));
+    setTabContent('rca',      loadingCard('Generating RCA & fix...'));
+
+    try {
+      const ns     = document.getElementById('namespace').value || 'default';
+      const prompt = buildAnalysisPrompt(pod.name, ns, pod.state);
+      const result = await callLangflow(prompt);
+      // Use tool output if available (richer data), else fall back to text
+      const toolOut = result.toolOutput;
+      podDataCache[pod.name] = toolOut
+        ? parseToolOutput(toolOut, pod, result.text)
+        : parseAnalysisResult(result.text, pod);
+    } catch(err) {
+      const emptyMsg = err.message === 'EMPTY_OUTPUT'
+        ? 'Langflow returned empty output. Ensure your flow has a Chat Output component connected to the Agent. Open Langflow → Add Chat Output → Connect Agent → Chat Output → Save.'
+        : err.message;
+      const errCard = `<div class="alert">⚠ ${emptyMsg}</div>`;
+      ['overview','logs','describe','events','rca'].forEach(t => setTabContent(t, errCard));
+      return;
+    }
+  }
+
+  renderPodTabs(podDataCache[pod.name], pod);
+  switchTabByName(activeTab);
+}
+
+function buildAnalysisPrompt(podName, ns, state) {
+  return `Check all pods in the "${ns}" namespace for any error states including CrashLoopBackOff, ImagePullBackOff, OOMKilled, ErrImagePull, Evicted, Pending, or any other failed state.
+
+1. Use the analyze_pods tool with namespace="${ns}" to scan and list all errored pods
+2. For each errored pod the tool returns, identify the root cause from its logs, describe output, and events
+3. For each pod provide:
+   - RCA: The exact reason it is failing
+   - Fix: Specific kubectl commands or config changes to resolve it
+
+Focus your analysis on pod "${podName}" which is currently in ${state} state.
+
+Then respond in this EXACT format:
+
+=== LOGS ===
+<actual log output for ${podName}>
+
+=== DESCRIBE ===
+<kubectl describe output for ${podName}>
+
+=== EVENTS ===
+<kubectl events for ${podName}>
+
+=== ROOT CAUSE ===
+<exact root cause in 2-3 sentences>
+
+=== FIX ===
+<numbered list of specific kubectl commands or config changes to resolve it>`;
+}
+
+// Extract per-pod section from the full tool output (handles multiple pods)
+function extractPodSection(toolOut, podName) {
+  // Split on the ============ separator lines and find the matching pod block
+  const sections = toolOut.split(/={10,}/);
+  for (let i = 0; i < sections.length; i++) {
+    // Check if this section starts with POD: <podName>
+    if (sections[i].trim().toUpperCase().startsWith('POD:') &&
+        sections[i].toLowerCase().includes(podName.toLowerCase())) {
+      return sections[i];
+    }
+  }
+  // Fallback — return full output (single pod case)
+  return toolOut;
+}
+
+// Parse --- Section --- format from analyze_pods tool output
+function parseToolOutput(toolOut, pod, llmText) {
+  // Narrow to just this pod's section if multiple pods
+  const section = extractPodSection(toolOut, pod.name);
+
+  const extract = (label) => {
+    const re = new RegExp('--- ' + label + ' ---\n([\s\S]*?)(?=---|={10}|$)', 'i');
+    const m  = section.match(re);
+    return m ? m[1].trim() : '';
+  };
+
+  const logs   = extract('Logs');
+  const desc   = extract('Describe');
+  const events = extract('Events');
+
+  // Extract restart count from describe output
+  const restartMatch = desc.match(/Restart Count:\s*(\d+)/i);
+  if (restartMatch !== null) {
+    pod.restarts = parseInt(restartMatch[1]);
+  }
+
+  // Extract RCA and Fix from what the LLM actually said (matches Playground output)
+  // The LLM response contains the analysis text before the JSON array
+  const rca = extractLLMRCA(llmText, pod.name) || dataRCA(pod.state, logs, desc, events);
+  const fix = extractLLMFix(llmText, pod.name) || dataFix(pod.state, logs, desc);
+
+  return {
+    raw: section,
+    logs, describe: desc, events,
+    rca, fix, pod,
+  };
+}
+
+// Slice the LLM text to just the section relevant to this pod
+// The LLM response lists pods sequentially — find the pod's paragraph block
+function sliceLLMForPod(llmText, podName) {
+  if (!llmText) return '';
+  const lines = llmText.split('\n');
+  // Find where this pod is first mentioned
+  const podStart = lines.findIndex(l =>
+    l.toLowerCase().includes(podName.toLowerCase())
+  );
+  if (podStart < 0) return llmText; // pod not mentioned, use full text
+
+  // Find where the NEXT pod starts (a line that mentions a different numbered pod
+  // or a new "POD:" header or a new bullet "•")
+  let podEnd = lines.length;
+  for (let i = podStart + 1; i < lines.length; i++) {
+    const l = lines[i];
+    // Stop at JSON array start, next pod bullet, or next numbered section header
+    if (
+      l.trim().startsWith('[{') ||
+      l.trim().startsWith('```') ||
+      (l.includes('•') && !l.toLowerCase().includes(podName.toLowerCase())) ||
+      (/^\d+\.\s+pod:/i.test(l.trim()) && !l.toLowerCase().includes(podName.toLowerCase()))
+    ) {
+      podEnd = i;
+      break;
+    }
+  }
+  return lines.slice(podStart, podEnd).join('\n');
+}
+
+// Extract RCA from the pod-scoped LLM text
+function extractLLMRCA(llmText, podName) {
+  if (!llmText) return null;
+  const podText = sliceLLMForPod(llmText, podName);
+
+  // Match labelled patterns within this pod's section only
+  const patterns = [
+    /RCA[:\s-]+(.+?)(?=Fix:|\n\n|$)/is,
+    /Root Cause[^:]*:\s*(.+?)(?=Fix:|\n\n|$)/is,
+    /- RCA:\s*(.+?)(?=- Fix:|\n\n|$)/is,
+  ];
+  for (const re of patterns) {
+    const m = podText.match(re);
+    if (m && m[1].trim().length > 20) return m[1].trim();
+  }
+  // Fallback: return the first substantive line in the pod's section
+  const lines = podText.split('\n').filter(l =>
+    l.trim().length > 30 &&
+    !l.toLowerCase().includes('rca:') &&
+    !l.toLowerCase().includes('fix:') &&
+    !l.trim().startsWith('-') &&
+    !l.trim().startsWith('•')
+  );
+  return lines.length ? lines[0].trim() : null;
+}
+
+// Extract Fix from the pod-scoped LLM text
+function extractLLMFix(llmText, podName) {
+  if (!llmText) return null;
+  const podText = sliceLLMForPod(llmText, podName);
+
+  const patterns = [
+    /Fix[:\s-]+(.+?)(?=RCA:|\n\n\n|$)/is,
+    /- Fix:\s*(.+?)(?=- RCA:|\n\n\n|$)/is,
+    /Suggested Fix[^:]*:\s*(.+?)(?=RCA:|\n\n\n|$)/is,
+  ];
+  for (const re of patterns) {
+    const m = podText.match(re);
+    if (m && m[1].trim().length > 10) return m[1].trim();
+  }
+  return null;
+}
+
+// RCA derived from actual kubectl output — not generic templates
+function dataRCA(state, logs, desc, events) {
+  // ImagePullBackOff — extract actual image name and error
+  if (state === 'ImagePullBackOff' || state === 'ErrImagePull') {
+    const imgMatch  = desc.match(/Image:\s*(\S+)/i);
+    const img       = imgMatch ? imgMatch[1] : 'unknown';
+    const evtErrMsg = events.split('\n').find(l => /back-off|failed|error/i.test(l)) || '';
+    return `Kubernetes cannot pull the container image "${img}". ` +
+           `The image either does not exist in the registry, has a wrong tag, ` +
+           `or requires authentication credentials (imagePullSecret). ` +
+           (evtErrMsg ? `Latest event: ${evtErrMsg.trim()}` : '');
+  }
+  // CrashLoopBackOff — extract actual error line from logs
+  if (state === 'CrashLoopBackOff') {
+    const logLines  = logs.split('\n').filter(l => l.trim());
+    const errLine   = logLines.find(l => /error|panic|exception|fatal|exit/i.test(l));
+    const lastLines = logLines.slice(-3).join(' | ');
+    return `The container crashes on startup and Kubernetes keeps restarting it. ` +
+           (errLine
+             ? `Error detected in logs: "${errLine.trim()}"`
+             : `Last log lines: ${lastLines || '(no logs captured)'}`);
+  }
+  // OOMKilled — confirm from describe
+  if (state === 'OOMKilled') {
+    const limitMatch = desc.match(/memory:\s*(\S+)/i);
+    const limit = limitMatch ? limitMatch[1] : 'configured limit';
+    return `The container was killed by the Linux OOM killer because it exceeded its memory limit (${limit}). ` +
+           `This indicates either the memory limit is set too low or there is a memory leak in the application.`;
+  }
+  // Pending — extract scheduling failure from events
+  if (state === 'Pending') {
+    const schedErr = events.split('\n').find(l => /insufficient|unschedulable|failed|no nodes/i.test(l));
+    return `The pod is waiting to be scheduled and has not been assigned to any node. ` +
+           (schedErr
+             ? `Scheduler message: "${schedErr.trim()}"`
+             : `Check node resources and taints. Run: kubectl describe nodes`);
+  }
+  // Evicted
+  if (state === 'Evicted') {
+    const evictMsg = desc.match(/message:\s*(.+)/i);
+    return `The pod was evicted from its node. ` +
+           (evictMsg ? evictMsg[1] : 'Likely caused by node memory or disk pressure.');
+  }
+  return `Pod is in ${state} state. ` +
+         (logs ? `Last log entry: ${logs.split('\n').filter(Boolean).pop()}` : 'No logs available.');
+}
+
+// Fix steps derived from actual data
+function dataFix(state, logs, desc) {
+  if (state === 'ImagePullBackOff' || state === 'ErrImagePull') {
+    const imgMatch = desc.match(/Image:\s*(\S+)/i);
+    const img = imgMatch ? imgMatch[1] : '<image-name>';
+    return `1. Verify the image exists:\n   docker pull ${img}\n` +
+           `2. Check for typos in the image name/tag in your manifest\n` +
+           `3. If private registry, create imagePullSecret:\n` +
+           `   kubectl create secret docker-registry regcred \\\n` +
+           `     --docker-server=<registry> \\\n` +
+           `     --docker-username=<user> \\\n` +
+           `     --docker-password=<pass>\n` +
+           `4. Add to pod spec: imagePullSecrets: [{name: regcred}]\n` +
+           `5. Delete and recreate the pod after fixing the image`;
+  }
+  if (state === 'CrashLoopBackOff') {
+    return `1. Check previous container logs for the exact error:\n` +
+           `   kubectl logs <pod> -n <ns> --previous --tail=50\n` +
+           `2. Fix the root cause in the application or startup command\n` +
+           `3. Review liveness probe settings — add initialDelaySeconds if app is slow to start\n` +
+           `4. Verify ConfigMaps, Secrets, and env vars are all present\n` +
+           `5. Delete the pod to reset restart count after fixing: kubectl delete pod <pod> -n <ns>`;
+  }
+  if (state === 'OOMKilled') {
+    return `1. Increase memory limit in your deployment/pod spec:\n` +
+           `   resources:\n     limits:\n       memory: "512Mi"  # increase as needed\n` +
+           `2. Monitor actual usage: kubectl top pod <pod> -n <ns>\n` +
+           `3. Check application for memory leaks\n` +
+           `4. Consider setting memory requests = limits for guaranteed QoS`;
+  }
+  if (state === 'Pending') {
+    return `1. Check node capacity: kubectl describe nodes | grep -A5 Allocatable\n` +
+           `2. Check events: kubectl get events -n <ns> --sort-by=.lastTimestamp\n` +
+           `3. Check for taints blocking scheduling: kubectl get nodes -o wide\n` +
+           `4. Verify PVCs are bound: kubectl get pvc -n <ns>\n` +
+           `5. Check resource requests aren't too high for available nodes`;
+  }
+  if (state === 'Evicted') {
+    return `1. Delete the evicted pod: kubectl delete pod <pod> -n <ns>\n` +
+           `2. Check node pressure: kubectl describe nodes | grep -A5 Conditions\n` +
+           `3. Free up disk/memory on the node or add more nodes\n` +
+           `4. Set PodDisruptionBudgets to prevent future evictions`;
+  }
+  return `1. kubectl describe pod <pod> -n <ns>\n` +
+         `2. kubectl logs <pod> -n <ns> --previous\n` +
+         `3. kubectl get events -n <ns> --field-selector involvedObject.name=<pod>\n` +
+         `4. Fix the identified issue and redeploy`;
+}
+
+// Parse === SECTION === format from analysis prompt response
+function parseAnalysisResult(raw, pod) {
+  const extract = (tag) => {
+    const re = new RegExp('=== ' + tag + ' ===\n([\s\S]*?)(?====|$)', 'i');
+    const m  = raw.match(re);
+    return m ? m[1].trim() : '';
+  };
+  return {
+    raw,
+    logs:    extract('LOGS'),
+    describe:extract('DESCRIBE'),
+    events:  extract('EVENTS'),
+    rca:     extract('ROOT CAUSE') || dataRCA(pod.state, raw, raw, raw),
+    fix:     extract('FIX')        || dataFix(pod.state, raw, raw),
+    pod,
+  };
+}
+
+function renderPodTabs(data, pod) {
+  const ns = document.getElementById('namespace').value || 'default';
+
+  // Overview
+  setTabContent('overview', `
+    <div class="rca-header">
+      <div>
+        <div class="rca-title">Pod: <span>${pod.name}</span></div>
+        <div style="font-size:11px;color:var(--muted);margin-top:4px;">Namespace: ${ns}</div>
+      </div>
+      <div class="pod-state state-badge ${stateColor(pod.state)}" style="font-size:13px;padding:6px 14px;">
+        ${stateBadge(pod.state)} ${pod.state}
+      </div>
+    </div>
+    <div class="rca-box">
+      <h4>⚠ Root Cause</h4>
+      <p>${data.rca || 'Run analysis to see root cause.'}</p>
+    </div>
+    <div class="rca-box fix">
+      <h4>✓ Recommended Fix</h4>
+      ${renderFix(data.fix)}
+    </div>
+    <div class="card">
+      <div class="card-header"><div class="card-title">Recent Events</div></div>
+      <div class="card-body">
+        <div class="terminal">${colorize(data.events || '(no events)')}</div>
+      </div>
+    </div>
+  `);
+
+  // Logs
+  setTabContent('logs', `
+    <div class="card">
+      <div class="card-header">
+        <div class="card-title">Container Logs</div>
+        <button class="btn-sm" onclick="copyText(\`${escapeBacktick(data.logs)}\`)">Copy</button>
+      </div>
+      <div class="card-body">
+        <div class="terminal">${colorize(data.logs || '(no logs available)')}</div>
+      </div>
+    </div>
+  `);
+
+  // Describe
+  setTabContent('describe', `
+    <div class="card">
+      <div class="card-header">
+        <div class="card-title">kubectl describe pod ${pod.name}</div>
+        <button class="btn-sm" onclick="copyText(\`${escapeBacktick(data.describe)}\`)">Copy</button>
+      </div>
+      <div class="card-body">
+        <div class="terminal">${colorize(data.describe || '(no describe output)')}</div>
+      </div>
+    </div>
+  `);
+
+  // Events
+  setTabContent('events', `
+    <div class="card">
+      <div class="card-header">
+        <div class="card-title">kubectl get events --field-selector involvedObject.name=${pod.name}</div>
+        <button class="btn-sm" onclick="copyText(\`${escapeBacktick(data.events)}\`)">Copy</button>
+      </div>
+      <div class="card-body">
+        <div class="terminal">${colorize(data.events || '(no events)')}</div>
+      </div>
+    </div>
+  `);
+
+  // RCA
+  setTabContent('rca', `
+    <div class="rca-box" style="margin-bottom:16px;">
+      <h4>⚠ Root Cause Analysis</h4>
+      <p>${data.rca || 'No RCA available.'}</p>
+    </div>
+    <div class="rca-box fix">
+      <h4>✓ Fix Steps</h4>
+      ${renderFix(data.fix)}
+    </div>
+    <div class="card">
+      <div class="card-header"><div class="card-title">Quick Commands</div></div>
+      <div class="card-body">
+        ${quickCommands(pod.name, ns).map(c => `
+        <div class="cmd-block">
+          <code>${c}</code>
+          <button class="copy-btn" onclick="copyText('${c}')">COPY</button>
+        </div>`).join('')}
+      </div>
+    </div>
+  `);
+}
+
+function renderFix(fix) {
+  if (!fix) return '<p>No fix available.</p>';
+  // Try to render as list if it has numbers
+  if (/\d\.\s/.test(fix)) {
+    const items = fix.split(/\n/).filter(l => l.trim());
+    return `<ul>${items.map(i => `<li>${i.replace(/^\d+\.\s*/, '')}</li>`).join('')}</ul>`;
+  }
+  return `<p>${fix}</p>`;
+}
+
+function quickCommands(pod, ns) {
+  return [
+    `kubectl logs ${pod} -n ${ns} --previous --tail=100`,
+    `kubectl describe pod ${pod} -n ${ns}`,
+    `kubectl get events -n ${ns} --field-selector involvedObject.name=${pod}`,
+    `kubectl delete pod ${pod} -n ${ns}`,
+    `kubectl get pod ${pod} -n ${ns} -o yaml`,
+  ];
+}
+
+function colorize(text) {
+  if (!text) return '';
+  return text
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+    .replace(/(error|Error|ERROR|failed|Failed|FAILED|exception|Exception)/g,
+             '<span class="err">$1</span>')
+    .replace(/(Warning|WARN|warning)/g, '<span class="warn">$1</span>')
+    .replace(/(Running|Succeeded|Ready|True)/g, '<span class="ok">$1</span>')
+    .replace(/(CrashLoopBackOff|ImagePullBackOff|OOMKilled|Evicted)/g,
+             '<span class="err">$1</span>')
+    .replace(/(INFO|info|Started|Created)/g, '<span class="info">$1</span>');
+}
+
+function escapeBacktick(s) {
+  return (s || '').replace(/`/g, "'").replace(/\\/g, '\\\\');
+}
+
+function loadingCard(msg) {
+  return `<div class="card"><div class="card-body" style="text-align:center;padding:40px;">
+    <div class="scan-ring" style="margin:0 auto 16px;"></div>
+    <div style="font-size:12px;color:var(--muted);">${msg}</div>
+  </div></div>`;
+}
+
+// ── UI HELPERS ─────────────────────────────────────────────────────
+function showView(v) {
+  document.getElementById('welcomeView').style.display   = v === 'welcome'   ? 'flex' : 'none';
+  document.getElementById('scanningView').classList.toggle('visible', v === 'scanning');
+  document.getElementById('podDetailView').style.display = v === 'podDetail' ? 'block' : 'none';
+}
+
+function setScanLog(msg) {
+  document.getElementById('scanLog').textContent = msg;
+}
+
+function setTabContent(tab, html) {
+  document.getElementById(`tab-${tab}`).innerHTML = html;
+}
+
+function switchTab(el, tab) {
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  el.classList.add('active');
+  switchTabByName(tab);
+  activeTab = tab;
+}
+
+function switchTabByName(tab) {
+  ['overview','logs','describe','events','rca'].forEach(t => {
+    document.getElementById(`tab-${t}`).style.display = t === tab ? 'block' : 'none';
+  });
+}
+
+function toggleFilter(el, state) {
+  document.querySelectorAll('.chip').forEach(c => c.classList.remove('active'));
+  el.classList.add('active');
+  activeFilter = state;
+  renderPodList(allPods);
+}
+
+function showAlert(msg) {
+  document.getElementById('welcomeView').style.display = 'flex';
+  const w = document.getElementById('welcomeView');
+  const existing = w.querySelector('.alert');
+  if (existing) existing.remove();
+  const a = document.createElement('div');
+  a.className = 'alert';
+  a.textContent = '⚠ ' + msg;
+  w.appendChild(a);
+}
+
+function showToast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), 3000);
+}
+
+async function copyText(text) {
+  try {
+    await navigator.clipboard.writeText(text);
+    showToast('Copied to clipboard');
+  } catch(e) {
+    showToast('Copy failed');
+  }
+}
+
+// Init
+showView('welcome');
+document.getElementById('clock').textContent = new Date().toLocaleTimeString('en-GB');
+</script>
+
+</body>
+</html>
