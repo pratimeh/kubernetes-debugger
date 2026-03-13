@@ -1,0 +1,10 @@
+Check all pods in the "default" namespace for any error states including 
+CrashLoopBackOff, ImagePullBackOff, OOMKilled, ErrImagePull, Evicted, 
+Pending, or any other failed state.
+
+1. Use the analyze_pods tool with namespace="default" to scan and list all errored pods
+2. For each errored pod the tool returns, identify the root cause from 
+   its logs, describe output, and events
+3. For each pod provide:
+   - RCA: The exact reason it is failing
+   - Fix: Specific kubectl commands or config changes to resolve it
