@@ -1,0 +1,35 @@
+🔴 POD: crash-demo  
+📌 ERROR STATE: CrashLoopBackOff  
+
+🔍 ROOT CAUSE ANALYSIS: The container is configured to run the command `sh -c exit 1`, which causes it to exit immediately with a non-zero exit code (1), leading to a crash.  
+
+🛠️ FIX: Update the pod's configuration to use a valid command that does not exit immediately. You can edit the deployment or pod manifest to change the command. For example, if you want the container to sleep instead of exiting, you can use:
+
+```bash
+kubectl edit pod crash-demo
+```
+
+Change the command section to:
+```yaml
+command: ["sh", "-c", "sleep 3600"]
+```
+
+---
+
+🔴 POD: imagepullback-demo  
+📌 ERROR STATE: ImagePullBackOff  
+
+🔍 ROOT CAUSE ANALYSIS: The pod is trying to pull an image named "busboy", which is likely incorrect or not available in the specified registry.  
+
+🛠️ FIX: Verify the correct image name and tag. If "busboy" is a typo or incorrect, update it to the correct image name. If it's a private image, ensure you have the correct imagePullSecrets configured. You can update the image name using:
+
+```bash
+kubectl edit pod imagepullback-demo
+```
+
+Change the image section to the correct image name, for example:
+```yaml
+image: "busybox:latest"
+```
+
+If it's a private image, ensure you have the correct imagePullSecrets configured in your pod spec.
